@@ -11,7 +11,7 @@ from django.db.models.signals import post_save
 from django.dispatch import receiver
 from django.utils import timezone
 
-from banking.models import Account, Transfer
+from banking.models import Account, Transfer, TransferStatus, TransferHistory, TransferDirection
 
 logger = logging.getLogger(__name__)
 
@@ -29,10 +29,9 @@ def queue_transfer(sender, instance, created, **kwargs):
         return
 
     now = timezone.now()
-    Transfer.objects.filter(pk=instance.pk).update(
-        processing_at=now + PROCESSING_AFTER,
-        realize_at=now + SETTLEMENT_AFTER,
-    )
+    #TransferHistory.objects.create(transfer=instance.pk,date=now + PROCESSING_AFTER, state = TransferStatus.PROCESSING)
+    #TransferHistory.objects.create(transfer=instance.pk, date=now + SETTLEMENT_AFTER,
+                                 #  state=TransferStatus.COMPLETED)
     logger.info(
         "Transfer %s accepted. Processing at %s, settles at %s",
         instance.pk,
@@ -47,20 +46,20 @@ def advance_transfers():
     with transaction.atomic():
         due = list(
             Transfer.objects.select_for_update()
-            .filter(status=Transfer.Status.PENDING, processing_at__lte=now)
+            .filter(status=TransferStatus.PENDING, created__lte=now)
             .order_by("pk")
         )
         for transfer in due:
-            if transfer.realize_at and transfer.realize_at <= now:
+            if transfer.created and transfer.created <= now:
                 _book(transfer)
             else:
-                transfer.status = Transfer.Status.PROCESSING
+                transfer.status = TransferStatus.PROCESSING
                 transfer.save(update_fields=["status"])
                 logger.info("Transfer %s is processing", transfer.pk)
 
         ready = list(
             Transfer.objects.select_for_update()
-            .filter(status=Transfer.Status.PROCESSING, realize_at__lte=now)
+            .filter(status=TransferStatus.PROCESSING, created__lte=now)
             .order_by("pk")
         )
         for transfer in ready:
@@ -68,30 +67,43 @@ def advance_transfers():
 
 
 def _book(transfer):
-    if transfer.status not in (Transfer.Status.PENDING, Transfer.Status.PROCESSING):
+    if transfer.status not in (TransferStatus.PENDING, TransferStatus.PROCESSING):
         return
 
     account = Account.objects.select_for_update().get(pk=transfer.internalAccount_id)
-    if transfer.ammount <= 0 or account.amount < transfer.ammount:
-        transfer.status = Transfer.Status.REJECTED
-        transfer.settled_at = timezone.now()
-        transfer.save(update_fields=["status", "settled_at"])
+
+    if transfer.direction == TransferDirection.INCOMING:
+        Account.objects.filter(pk=account.pk).update(amount=F("amount") + transfer.amount)
+        transfer.status = TransferStatus.COMPLETED
+        transfer.save(update_fields=["status"])
+        logger.info("Incoming")
+    elif transfer.direction == TransferDirection.OUTGOING:
+        if transfer.amount <= 0 or account.amount < transfer.amount:
+            transfer.status = TransferStatus.REJECTED
+            transfer.save(update_fields=["status"])
+            logger.info(
+                "Rejected transfer %s on account %s",
+                transfer.pk,
+                transfer.internalAccount_id,
+            )
+            return
+
+        Account.objects.filter(pk=account.pk).update(amount=F("amount") - transfer.amount)
+        transfer.status = TransferStatus.COMPLETED
+        # transfer.settled_at = timezone.now()
+        transfer.save(update_fields=["status"])
         logger.info(
-            "Rejected transfer %s on account %s",
+            "Settled transfer %s on account %s",
             transfer.pk,
             transfer.internalAccount_id,
         )
-        return
+    elif transfer.direction == TransferDirection.INTERNAL:
+        logger.info("Internal")
+    else:
+        logger.error("Transfer type not found")
 
-    Account.objects.filter(pk=account.pk).update(amount=F("amount") - transfer.ammount)
-    transfer.status = Transfer.Status.COMPLETED
-    transfer.settled_at = timezone.now()
-    transfer.save(update_fields=["status", "settled_at"])
-    logger.info(
-        "Settled transfer %s on account %s",
-        transfer.pk,
-        transfer.internalAccount_id,
-    )
+
+
 
 
 def _settlement_loop():

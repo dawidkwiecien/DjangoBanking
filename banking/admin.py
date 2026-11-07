@@ -11,7 +11,8 @@ logger = logging.getLogger(__name__)
 @admin.register(Account)
 class AccountAdmin(admin.ModelAdmin):
     readonly_fields = [f.name for f in Account._meta.fields]
-    list_display = ['number','created']
+    list_display = ['number','amount','created']
+    list_filter = ["owner"]
 
     def add_view(self, request, form_url=..., extra_context=...):
         account = Account.objects.create()
@@ -30,12 +31,11 @@ class AccountAdmin(admin.ModelAdmin):
 class TransferAdmin(admin.ModelAdmin):
     list_display = [
         "id",
-        "amount",
         "internalAccount",
+        "amount",
         "externalAccount",
+        "direction",
         "status",
-        "created",
-        "settled_at",
     ]
-    list_filter = ["status"]
-    readonly_fields = ["status", "created", "processing_at", "realize_at", "settled_at"]
+    list_filter = ["status","direction"]
+    readonly_fields = ["status","created"]
