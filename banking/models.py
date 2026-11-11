@@ -43,10 +43,6 @@ class Transfer(models.Model):
     direction = models.IntegerField(choices=TransferDirection.choices, default=TransferDirection.INTERNAL)
     created = models.DateTimeField(db_default=Now())
 
-    # processing_at = models.DateTimeField(null=True, blank=True)
-    # realize_at = models.DateTimeField(null=True, blank=True)
-    # settled_at = models.DateTimeField(null=True, blank=True)
-
     def save(self, *args, **kwargs):
         with transaction.atomic():
             super().save(*args, **kwargs)
