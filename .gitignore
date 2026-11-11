@@ -3,3 +3,4 @@ env/*
 db.sqlite3
 .DS_Store
 .idea/
+/.django-stub-gen/rule-tables.json
